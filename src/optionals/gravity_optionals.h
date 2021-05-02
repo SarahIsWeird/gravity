@@ -81,15 +81,6 @@
 #define GRAVITY_INCLUDE_REQUIRE
 #endif
 
-#ifdef GRAVITY_INCLUDE_REQUIRE
-#define GRAVITY_REQUIRE_REGISTER(_vm)        gravity_require_register(_vm)
-#define GRAVITY_REQUIRE_FREE()               gravity_require_free()
-#include "gravity_opt_require.h"
-#else
-#define GRAVITY_REQUIRE_REGISTER(_vm)
-#define GRAVITY_FILE_FREE()
-#endif
-
 #ifdef _MSC_VER
 #define INLINE								__inline
 #else

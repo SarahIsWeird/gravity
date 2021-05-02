@@ -10,6 +10,8 @@
 #include <math.h>
 #include <time.h>
 #include <stdlib.h>
+#include <errno.h>
+#include "gravity_compiler.h"
 #include "gravity_core.h"
 #include "gravity_hash.h"
 #include "gravity_value.h"
@@ -3181,6 +3183,65 @@ static bool system_exit (gravity_vm *vm, gravity_value_t *args, uint16_t nargs, 
     RETURN_NOVALUE();
 }
 
+#define READ_CHUNK_SIZE 1024
+
+static bool system_import (gravity_vm *vm, gravity_value_t *args, uint16_t nargs, uint32_t rindex) {
+    if (nargs != 2 || !VALUE_ISA_STRING(args[1])) {
+        RETURN_ERROR("require must be called with one string argument!");
+    }
+    
+    char *library_name = VALUE_AS_CSTRING(args[1]);
+    
+    char file_name_gravity[512];
+    sprintf(file_name_gravity, "%s.gravity", library_name);
+    
+    if (!file_exists(file_name_gravity)) {
+        RETURN_ERROR("File %s doesn't exist!", file_name_gravity);
+    }
+    
+    int fd = open(file_name_gravity, O_RDONLY);
+    if (fd < 0) {
+        RETURN_ERROR("Couldn't open file %s: %s\n", file_name_gravity, strerror(errno));
+    }
+    
+    char *source = malloc(1);
+    char read_buffer[READ_CHUNK_SIZE];
+    size_t size = 0;
+    size_t chunk_size;
+    do {
+        chunk_size = read(fd, read_buffer, READ_CHUNK_SIZE);
+        
+        source = realloc(source, size + chunk_size);
+        memcpy(source + size, read_buffer, chunk_size);
+        
+        size += chunk_size;
+    } while (chunk_size == READ_CHUNK_SIZE);
+    
+    source = realloc(source, size + 1);
+    source[size] = '\0';
+    
+    gravity_compiler_t *compiler = gravity_compiler_create(gravity_vm_delegate(vm));
+    gravity_closure_t *importedClosure = gravity_compiler_run(compiler, source, size, 0, false, true);
+    
+    gravity_compiler_transfer(compiler, vm);
+    gravity_compiler_free(compiler);
+    
+    gravity_vm_runclosure(vm, importedClosure, VALUE_FROM_NULL, NULL, 0); 
+    
+    // Get the export function from the library
+    gravity_value_t export_fn = gravity_vm_getvalue(vm, "export", 6);
+    if (!VALUE_ISA_CLOSURE(export_fn)) {
+        RETURN_ERROR("%s doesn't have an export function!", library_name);
+    }
+    
+    bool has_result = gravity_vm_runclosure(vm, VALUE_AS_CLOSURE(export_fn), VALUE_FROM_NULL, NULL, 0);
+    if (!has_result) {
+        RETURN_ERROR("%s's export function didn't return anything!", library_name);
+    }
+    
+    RETURN_VALUE(gravity_vm_result(vm), rindex);
+}
+
 
 // MARK: - CORE -
 
@@ -3536,6 +3597,7 @@ void gravity_core_init (void) {
     gravity_class_bind(system_meta, GRAVITY_SYSTEM_PUT_NAME, NEW_CLOSURE_VALUE(system_put));
     gravity_class_bind(system_meta, GRAVITY_SYSTEM_INPUT_NAME, NEW_CLOSURE_VALUE(system_input));
     gravity_class_bind(system_meta, "exit", NEW_CLOSURE_VALUE(system_exit));
+    gravity_class_bind(system_meta, "import", NEW_CLOSURE_VALUE(system_import));
 
     closure = computed_property_create(NULL, NEW_FUNCTION(system_get), NEW_FUNCTION(system_set));
     gravity_value_t value = VALUE_FROM_OBJECT(closure);
