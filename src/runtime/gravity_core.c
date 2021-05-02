@@ -11,6 +11,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <dlfcn.h>
 #include "gravity_compiler.h"
 #include "gravity_core.h"
 #include "gravity_hash.h"
@@ -3195,51 +3196,72 @@ static bool system_import (gravity_vm *vm, gravity_value_t *args, uint16_t nargs
     char file_name_gravity[512];
     sprintf(file_name_gravity, "%s.gravity", library_name);
     
-    if (!file_exists(file_name_gravity)) {
-        RETURN_ERROR("File %s doesn't exist!", file_name_gravity);
-    }
-    
-    int fd = open(file_name_gravity, O_RDONLY);
-    if (fd < 0) {
-        RETURN_ERROR("Couldn't open file %s: %s\n", file_name_gravity, strerror(errno));
-    }
-    
-    char *source = malloc(1);
-    char read_buffer[READ_CHUNK_SIZE];
-    size_t size = 0;
-    size_t chunk_size;
-    do {
-        chunk_size = read(fd, read_buffer, READ_CHUNK_SIZE);
+    if (file_exists(file_name_gravity)) {
+        int fd = open(file_name_gravity, O_RDONLY);
+        if (fd < 0) {
+            RETURN_ERROR("Couldn't open file %s: %s\n", file_name_gravity, strerror(errno));
+        }
         
-        source = realloc(source, size + chunk_size);
-        memcpy(source + size, read_buffer, chunk_size);
+        char *source = malloc(1);
+        char read_buffer[READ_CHUNK_SIZE];
+        size_t size = 0;
+        size_t chunk_size;
         
-        size += chunk_size;
-    } while (chunk_size == READ_CHUNK_SIZE);
-    
-    source = realloc(source, size + 1);
-    source[size] = '\0';
-    
-    gravity_compiler_t *compiler = gravity_compiler_create(gravity_vm_delegate(vm));
-    gravity_closure_t *importedClosure = gravity_compiler_run(compiler, source, size, 0, false, true);
-    
-    gravity_compiler_transfer(compiler, vm);
-    gravity_compiler_free(compiler);
-    
-    gravity_vm_runclosure(vm, importedClosure, VALUE_FROM_NULL, NULL, 0); 
-    
-    // Get the export function from the library
-    gravity_value_t export_fn = gravity_vm_getvalue(vm, "export", 6);
-    if (!VALUE_ISA_CLOSURE(export_fn)) {
-        RETURN_ERROR("%s doesn't have an export function!", library_name);
+        do {
+            chunk_size = read(fd, read_buffer, READ_CHUNK_SIZE);
+            
+            source = realloc(source, size + chunk_size);
+            memcpy(source + size, read_buffer, chunk_size);
+            
+            size += chunk_size;
+        } while (chunk_size == READ_CHUNK_SIZE);
+        
+        source = realloc(source, size + 1);
+        source[size] = '\0';
+        
+        gravity_compiler_t *compiler = gravity_compiler_create(gravity_vm_delegate(vm));
+        gravity_closure_t *importedClosure = gravity_compiler_run(compiler, source, size, 0, false, true);
+        
+        gravity_compiler_transfer(compiler, vm);
+        gravity_compiler_free(compiler);
+        
+        gravity_vm_runclosure(vm, importedClosure, VALUE_FROM_NULL, NULL, 0); 
+        
+        // Get the export function from the library
+        gravity_value_t export_fn = gravity_vm_getvalue(vm, "export", 6);
+        if (!VALUE_ISA_CLOSURE(export_fn)) {
+            RETURN_ERROR("%s doesn't have an export function!", library_name);
+        }
+        
+        bool has_result = gravity_vm_runclosure(vm, VALUE_AS_CLOSURE(export_fn), VALUE_FROM_NULL, NULL, 0);
+        if (!has_result) {
+            RETURN_ERROR("%s's export function didn't return anything!", library_name);
+        }
+        
+        RETURN_VALUE(gravity_vm_result(vm), rindex);
     }
     
-    bool has_result = gravity_vm_runclosure(vm, VALUE_AS_CLOSURE(export_fn), VALUE_FROM_NULL, NULL, 0);
-    if (!has_result) {
-        RETURN_ERROR("%s's export function didn't return anything!", library_name);
+    char file_name_native[512];
+    sprintf(file_name_native, "./%s.gso", library_name);
+    
+    if (file_exists(file_name_native)) {
+        dlopen(NULL, RTLD_NOLOAD | RTLD_GLOBAL);
+        void* handle = dlopen(file_name_native, RTLD_NOW);
+        if (handle == NULL) {
+            RETURN_ERROR("Couldn't open native library %s: %s", file_name_native, dlerror());
+        }
+        
+        gravity_value_t* (*export_fn)(gravity_vm*) = dlsym(handle, "gravity_export");
+        if (export_fn == NULL) {
+            RETURN_ERROR("Couldn't load export function from library %s: %s", file_name_native, dlerror());
+        }
+        
+        gravity_value_t returnValue = *(*export_fn)(vm);
+
+        RETURN_VALUE(returnValue, rindex);
     }
     
-    RETURN_VALUE(gravity_vm_result(vm), rindex);
+    RETURN_ERROR("Couldn't find a library called %s!", library_name);
 }
 
 
