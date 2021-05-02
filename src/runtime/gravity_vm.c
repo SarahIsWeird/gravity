@@ -359,6 +359,7 @@ void gravity_opt_register (gravity_vm *vm) {
     GRAVITY_ENV_REGISTER(vm);
     GRAVITY_JSON_REGISTER(vm);
     GRAVITY_FILE_REGISTER(vm);
+    GRAVITY_REQUIRE_REGISTER(vm);
 }
 
 void gravity_opt_free() {
@@ -366,6 +367,7 @@ void gravity_opt_free() {
     GRAVITY_ENV_FREE();
     GRAVITY_JSON_FREE();
     GRAVITY_FILE_FREE();
+    GRAVITY_REQUIRE_FREE();
 }
 
 bool gravity_isopt_class (gravity_class_t *c) {
